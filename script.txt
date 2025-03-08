@@ -1,0 +1,226 @@
+local camera = workspace.CurrentCamera
+
+local run_service = game:GetService("RunService")
+local plr_service = game:GetService("Players")
+local user_input_service = game:GetService("UserInputService")
+
+local Lib = loadstring(game:HttpGet("https://raw.githubusercontent.com/laagginq/ui-libraries/main/coastified/src.lua"))()
+local Window = Lib:Window("FREE", "Main", Enum.KeyCode.End)
+local AimbotTab = Window:Tab("Aimbot")
+local ESPTab = Window:Tab("ESP")
+
+local features = {
+    aimbot = {enabled = false, fov = 150, speed = 10, hitpart = "Head"},
+    fov = {enabled = true},
+    esp = {enabled = true, color = Color3.fromRGB(0, 255, 0)},
+    healthBar = {enabled = true},
+    lockKey = Enum.UserInputType.MouseButton2,
+    aiming = false,
+    locked_player = nil
+}
+
+local fov_circle = Drawing.new("Circle")
+fov_circle.Color = Color3.fromRGB(255, 255, 255)
+fov_circle.Radius = features.aimbot.fov
+fov_circle.Thickness = 1
+fov_circle.Visible = features.fov.enabled
+
+local esp_boxes = {}
+
+
+function get_closest_player()
+    local closest = nil
+    local closest_dist = math.huge
+    local local_player = plr_service.LocalPlayer
+
+    for _, player in ipairs(plr_service:GetPlayers()) do
+        if player ~= local_player and player.Character and player.Character:FindFirstChild(features.aimbot.hitpart) then
+            local character = player.Character
+            local hitpart = character[features.aimbot.hitpart]
+            
+            local w2s, onscreen = camera:WorldToViewportPoint(hitpart.Position)
+            if onscreen then
+                local dist = (Vector2.new(w2s.X, w2s.Y) - Vector2.new(camera.ViewportSize.X / 2, camera.ViewportSize.Y / 2)).Magnitude
+                if dist < features.aimbot.fov and dist < closest_dist then
+                    closest = player
+                    closest_dist = dist
+                end
+            end
+        end
+    end
+
+    return closest
+end
+
+function angle_to_target(target)
+    local character = target.Character
+    if character then
+        local target_position = character:FindFirstChild(features.aimbot.hitpart).Position
+        local direction = (target_position - camera.CFrame.Position).unit
+        local dot_product = camera.CFrame.LookVector:Dot(direction)
+        return math.acos(dot_product) * (180 / math.pi)
+    end
+    return 180
+end
+
+local function createESP(player)
+    if player == plr_service.LocalPlayer then return end
+
+    local healthBarBackground = Drawing.new("Square")
+    healthBarBackground.Visible = false
+    healthBarBackground.Filled = true
+    healthBarBackground.Color = Color3.fromRGB(0, 0, 0)
+
+    local healthBar = Drawing.new("Square")
+    healthBar.Visible = false
+    healthBar.Filled = true
+    healthBar.Color = Color3.fromRGB(0, 255, 0)
+
+    local healthText = Drawing.new("Text")
+    healthText.Visible = false
+    healthText.Size = 14
+    healthText.Center = false
+    healthText.Outline = true
+
+    esp_boxes[player] = {
+        healthBarBackground = healthBarBackground,
+        healthBar = healthBar,
+        healthText = healthText
+    }
+end
+
+local function updateESP()
+    if not features.esp.enabled and not features.healthBar.enabled then return end
+
+    for player, data in pairs(esp_boxes) do
+        local healthBarBackground = data.healthBarBackground
+        local healthBar = data.healthBar
+        local healthText = data.healthText
+
+        if player.Character and player.Character:FindFirstChild("HumanoidRootPart") and player.Character:FindFirstChild("Humanoid") then
+            local rootPart = player.Character.HumanoidRootPart
+            local humanoid = player.Character.Humanoid
+            local screenPosition, onScreen = camera:WorldToViewportPoint(rootPart.Position)
+
+            if onScreen then
+                local distance = (rootPart.Position - camera.CFrame.Position).Magnitude
+                local size = math.clamp(2550 / (distance + 1), 10, 150)
+
+                local boxPosition = Vector2.new(screenPosition.X - size / 2, screenPosition.Y - size * 0.75)
+                local boxSize = Vector2.new(size, size * 1.5)
+
+                local maxHealth = humanoid.MaxHealth
+                local currentHealth = humanoid.Health
+                local healthPercentage = math.clamp(currentHealth / maxHealth, 0, 1)
+                local healthHeight = boxSize.Y * healthPercentage
+                local healthBarWidth = 2
+
+                healthBarBackground.Size = Vector2.new(healthBarWidth, boxSize.Y)
+                healthBarBackground.Position = Vector2.new(boxPosition.X + boxSize.X + 2, boxPosition.Y)
+                healthBarBackground.Visible = features.healthBar.enabled
+
+                local healthColor = Color3.fromRGB(255 * (1 - healthPercentage), 255 * healthPercentage, 0)
+                healthBar.Color = healthColor
+
+                healthBar.Size = Vector2.new(healthBarWidth, healthHeight)
+                healthBar.Position = Vector2.new(boxPosition.X + boxSize.X + 2, boxPosition.Y + (boxSize.Y - healthHeight))
+                healthBar.Visible = features.healthBar.enabled
+
+                local healthPercentText = math.floor(healthPercentage * 100) .. "%"
+                healthText.Text = healthPercentText
+                healthText.Color = healthColor
+                healthText.Position = Vector2.new(healthBar.Position.X + healthBarWidth + 6, healthBar.Position.Y - 5)
+                healthText.Visible = features.healthBar.enabled
+            else
+                healthBarBackground.Visible = false
+                healthBar.Visible = false
+                healthText.Visible = false
+            end
+        else
+            healthBarBackground.Visible = false
+            healthBar.Visible = false
+            healthText.Visible = false
+        end
+    end
+end
+
+run_service.RenderStepped:Connect(function()
+    if features.aimbot.enabled and features.aiming then
+        if features.locked_player then
+            local angle = angle_to_target(features.locked_player)
+            if angle <= features.aimbot.fov then
+                local hitpart = features.locked_player.Character:FindFirstChild(features.aimbot.hitpart)
+                if hitpart then
+                    local w2s = camera:WorldToViewportPoint(hitpart.Position)
+                    local mouse = user_input_service:GetMouseLocation()
+                    local speed = features.aimbot.speed / 10
+
+                    local diff_x = (w2s.X - mouse.X)
+                    local diff_y = (w2s.Y - mouse.Y)
+
+                    mousemoverel(diff_x * speed, diff_y * speed)
+                end
+            end
+        else
+            local closest = get_closest_player()
+            if closest then
+                features.locked_player = closest
+            end
+        end
+    end
+
+    fov_circle.Position = Vector2.new(camera.ViewportSize.X / 2, camera.ViewportSize.Y / 2)
+    fov_circle.Visible = features.fov.enabled
+
+    updateESP()
+end)
+
+AimbotTab:Toggle("Enable Aimbot", function(state)
+    features.aimbot.enabled = state
+end)
+
+AimbotTab:Toggle("Enable FOV Circle", function(state)
+    features.fov.enabled = state
+    fov_circle.Visible = state
+end)
+
+AimbotTab:Slider("FOV Size", 50, 300, features.aimbot.fov, function(value)
+    features.aimbot.fov = value
+    fov_circle.Radius = value
+end)
+
+AimbotTab:Slider("Aimbot Speed", 1, 100, features.aimbot.speed, function(value)
+    features.aimbot.speed = value
+end)
+
+AimbotTab:Dropdown("Lock Key", {"Right Click", "Q", "E", "F", "R", "T"}, function(selected)
+    if selected == "Right Click" then
+        features.lockKey = Enum.UserInputType.MouseButton2
+    else
+        features.lockKey = Enum.UserInputType.Keyboard
+    end
+end)
+
+ESPTab:Toggle("Enable ESP", function(state)
+    features.esp.enabled = state
+end)
+
+ESPTab:Toggle("Enable Health Bar", function(state)
+    features.healthBar.enabled = state
+end)
+
+for _, player in pairs(plr_service:GetPlayers()) do
+    createESP(player)
+end
+
+user_input_service.InputBegan:Connect(function(input)
+    if input.UserInputType == features.lockKey then
+        features.aiming = true
+    end
+end)
+
+user_input_service.InputEnded:Connect(function(input)
+    if input.UserInputType == features.lockKey then
+        features.aiming = false
+    end
+end)
